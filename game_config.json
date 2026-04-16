@@ -1,0 +1,24 @@
+{
+  "map_width": 1000,
+  "map_height": 680,
+  "fps": 120,
+  "balls_per_team": 18,
+  "ball_radius": 8,
+  "initial_speed": 180,
+  "min_speed": 80,
+  "max_speed": 280,
+  "initial_health": 100,
+  "collision_damage": 22,
+  "time_limit_sec": 90,
+  "wall_block_size": 20,
+  "wall_layout": {
+    "type": "cross",
+    "arm_ratio": 0.62,
+    "count": 120
+  },
+  "wall_blocks": [],
+  "action_acceleration": 70,
+  "action_turn_rate_deg": 120,
+  "seed": 7,
+  "debug_event_log": true
+}
