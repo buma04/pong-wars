@@ -1,5 +1,4 @@
-def main():
-    print("Hello from pong-wars!")
+from pongwars.runner import main
 
 
 if __name__ == "__main__":

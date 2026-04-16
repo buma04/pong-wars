@@ -4,6 +4,48 @@ It's the eternal battle between day and night, good and bad. Written in JavaScri
 
 https://github.com/vnglst/pong-wars/assets/3457693/4eae12fa-bdc1-49ee-8b39-c94deb7cb2c8
 
+## Python version in this repository
+
+This repository now includes a modular Python (pygame) implementation focused on collision handling with an event queue.
+
+Key features:
+- Queue-based collision processing (`BALL_BOUNDARY_COLLISION`, `BALL_WALL_COLLISION`, `BALL_BALL_COLLISION`, `BALL_DAMAGE`, `BALL_ELIMINATION_CHECK`)
+- OOP-friendly architecture split into package modules (`pongwars/`)
+- Neutral wall blocks that disappear on hit while balls reflect
+- Ball-vs-ball reflection + damage + lower-HP elimination
+- Runtime random wall spawning with safe placement (avoids overlap with alive balls)
+
+### Run Python version (uv)
+
+```sh
+uv sync
+source .venv/Scripts/activate
+python pong_wars.py --config game_config.json
+```
+
+You can also run:
+
+```sh
+python main.py --config game_config.json
+```
+
+### Config
+
+Main config is `game_config.json`.
+
+Relevant random wall spawn settings:
+
+```json
+"random_wall_spawn": {
+  "enabled": true,
+  "interval_sec": 2.5,
+  "blocks_per_spawn": 3,
+  "max_walls": 220,
+  "max_attempts_per_block": 80,
+  "avoid_ball_margin": 2.0
+}
+```
+
 ## Development
 
 Run:
