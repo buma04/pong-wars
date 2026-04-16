@@ -24,6 +24,14 @@ class RandomWallSpawnConfig:
 
 
 @dataclass(slots=True)
+class MotionPlanningConfig:
+    cache_steps: int = 8
+    dt_tolerance: float = 0.002
+    candidate_cache_steps: int = 2
+    spatial_hash_cell_size: int = 32
+
+
+@dataclass(slots=True)
 class GameConfig:
     map_width: int = 900
     map_height: int = 600
@@ -40,6 +48,7 @@ class GameConfig:
     wall_layout: WallLayoutConfig = field(default_factory=WallLayoutConfig)
     wall_blocks: list[tuple[int, int]] = field(default_factory=list)
     random_wall_spawn: RandomWallSpawnConfig = field(default_factory=RandomWallSpawnConfig)
+    motion_planning: MotionPlanningConfig = field(default_factory=MotionPlanningConfig)
     action_acceleration: float = 70.0
     action_turn_rate_deg: float = 120.0
     seed: int | None = None
@@ -56,6 +65,10 @@ class GameConfig:
         random_spawn_data = data.get("random_wall_spawn", {})
         if not isinstance(random_spawn_data, dict):
             random_spawn_data = {}
+
+        motion_planning_data = data.get("motion_planning", {})
+        if not isinstance(motion_planning_data, dict):
+            motion_planning_data = {}
 
         raw_wall_blocks = data.get("wall_blocks", defaults.wall_blocks)
         parsed_wall_blocks: list[tuple[int, int]] = []
@@ -105,6 +118,26 @@ class GameConfig:
                     random_spawn_data.get(
                         "avoid_ball_margin",
                         defaults.random_wall_spawn.avoid_ball_margin,
+                    )
+                ),
+            ),
+            motion_planning=MotionPlanningConfig(
+                cache_steps=int(
+                    motion_planning_data.get("cache_steps", defaults.motion_planning.cache_steps)
+                ),
+                dt_tolerance=float(
+                    motion_planning_data.get("dt_tolerance", defaults.motion_planning.dt_tolerance)
+                ),
+                candidate_cache_steps=int(
+                    motion_planning_data.get(
+                        "candidate_cache_steps",
+                        defaults.motion_planning.candidate_cache_steps,
+                    )
+                ),
+                spatial_hash_cell_size=int(
+                    motion_planning_data.get(
+                        "spatial_hash_cell_size",
+                        defaults.motion_planning.spatial_hash_cell_size,
                     )
                 ),
             ),
