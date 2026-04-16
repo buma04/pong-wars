@@ -17,6 +17,20 @@
     "count": 120
   },
   "wall_blocks": [],
+  "random_wall_spawn": {
+    "enabled": true,
+    "interval_sec": 2.5,
+    "blocks_per_spawn": 3,
+    "max_walls": 220,
+    "max_attempts_per_block": 80,
+    "avoid_ball_margin": 2.0
+  },
+  "motion_planning": {
+    "cache_steps": 8,
+    "dt_tolerance": 0.002,
+    "candidate_cache_steps": 2,
+    "spatial_hash_cell_size": 32
+  },
   "action_acceleration": 70,
   "action_turn_rate_deg": 120,
   "seed": 7,

@@ -4,6 +4,84 @@ It's the eternal battle between day and night, good and bad. Written in JavaScri
 
 https://github.com/vnglst/pong-wars/assets/3457693/4eae12fa-bdc1-49ee-8b39-c94deb7cb2c8
 
+## Python version in this repository
+
+This repository now includes a modular Python (pygame) implementation focused on collision handling with an event queue.
+
+Key features:
+- Queue-based disruption events (`BALL_BOUNDARY_COLLISION`, `BALL_WALL_COLLISION`, `BALL_BALL_COLLISION`, `BALL_DAMAGE`, `BALL_ELIMINATION_CHECK`)
+- Cache-first motion loop (`predict -> reuse -> invalidate -> recompute`)
+- OOP-friendly architecture split into package modules (`pongwars/`)
+- Lightweight broad-phase with spatial hashing and candidate cache
+- Neutral wall blocks that disappear on hit while balls reflect
+- Ball-vs-ball reflection + damage + lower-HP elimination
+- Runtime random wall spawning with safe placement (avoids overlap with alive balls)
+
+### Cache-first architecture (predictive update)
+
+The runtime is split into systems:
+- **Intent/Input System**: updates movement intent/actions
+- **Motion System**: fast path reuses cached motion plan when valid
+- **Collision System**: broad-phase spatial hash + narrow-phase checks
+- **Event System**: resolves disruptions and invalidates caches
+- **Rules System**: applies gameplay end conditions
+
+Each ball has runtime motion cache state containing:
+- normalized movement direction
+- speed
+- predicted next position
+- cache validity steps
+- dirty flag + version counter
+- cached nearby candidates (short-lived)
+
+Motion is recomputed only when invalidated by collisions, velocity changes,
+or relevant environment changes.
+
+## Module structure
+
+- `pongwars/config.py`: typed config loading
+- `pongwars/entities.py`: domain entities and actions
+- `pongwars/runtime.py`: motion cache + invalidation helpers
+- `pongwars/spatial.py`: broad-phase spatial hash
+- `pongwars/physics.py`: reflection + geometric collisions
+- `pongwars/events.py`: event types/payload
+- `pongwars/walls.py`: wall generation/spawn policy
+- `pongwars/spawn.py`: initial ball spawning
+- `pongwars/game.py`: orchestration of systems
+- `pongwars/runner.py`: CLI entrypoint
+
+
+### Run Python version (uv)
+
+```sh
+uv sync
+source .venv/Scripts/activate
+python pong_wars.py --config game_config.json
+```
+
+You can also run:
+
+```sh
+python main.py --config game_config.json
+```
+
+### Config
+
+Main config is `game_config.json`.
+
+Relevant random wall spawn settings:
+
+```json
+"random_wall_spawn": {
+  "enabled": true,
+  "interval_sec": 2.5,
+  "blocks_per_spawn": 3,
+  "max_walls": 220,
+  "max_attempts_per_block": 80,
+  "avoid_ball_margin": 2.0
+}
+```
+
 ## Development
 
 Run:
