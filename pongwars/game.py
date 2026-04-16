@@ -18,6 +18,17 @@ from pongwars.constants import (
 from pongwars.entities import Ball, BallAction, Team
 from pongwars.events import EventType, GameEvent
 from pongwars.physics import circle_rect_collision, reflect, wall_rect_from_cell
+from pongwars.runtime import (
+    BallRuntimeState,
+    build_motion_cache,
+    consume_candidate_cache,
+    consume_motion_plan,
+    invalidate_candidate_cache,
+    invalidate_motion,
+    refresh_motion_plan,
+    set_candidate_cache,
+)
+from pongwars.spatial import SpatialHash
 from pongwars.spawn import spawn_balls
 from pongwars.walls import generate_wall_blocks, spawn_random_walls
 
@@ -38,6 +49,18 @@ class PongWarsGame:
         self.wall_blocks = generate_wall_blocks(cfg)
         self.balls = spawn_balls(cfg, self.wall_blocks)
         self.ball_by_id = {ball.id: ball for ball in self.balls}
+        self.runtime = {
+            ball.id: BallRuntimeState(
+                motion=build_motion_cache(
+                    ball=ball,
+                    dt=1.0 / max(1, cfg.fps),
+                    validity_steps=cfg.motion_planning.cache_steps,
+                )
+            )
+            for ball in self.balls
+        }
+
+        self.spatial_hash = SpatialHash(cfg.motion_planning.spatial_hash_cell_size)
         self.events: deque[GameEvent] = deque()
 
         self.elapsed_sec = 0.0
@@ -56,6 +79,18 @@ class PongWarsGame:
             self.render()
         pygame.quit()
 
+    def step(self, dt: float) -> None:
+        self.elapsed_sec += dt
+        self.random_wall_spawn_elapsed_sec += dt
+
+        alive_balls = self.alive_balls()
+        self.intent_system(alive_balls, dt)
+        self.motion_system(alive_balls, dt)
+        self.collision_system(alive_balls)
+        self.event_system()
+        self.rules_system()
+        self.spawn_runtime_walls_if_needed()
+
     def handle_system_events(self) -> None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -63,12 +98,9 @@ class PongWarsGame:
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 self.running = False
 
-    def step(self, dt: float) -> None:
-        self.elapsed_sec += dt
-        self.random_wall_spawn_elapsed_sec += dt
-
-        alive_balls = self.alive_balls()
+    def intent_system(self, alive_balls: list[Ball], dt: float) -> None:
         for ball in alive_balls:
+            previous_velocity = (ball.vx, ball.vy)
             ball.apply_action(
                 BallAction.NO_OP,
                 dt,
@@ -77,13 +109,51 @@ class PongWarsGame:
                 self.cfg.min_speed,
                 self.cfg.max_speed,
             )
-            ball.move(dt)
+            if (ball.vx, ball.vy) != previous_velocity:
+                self.invalidate_ball_cache(ball.id)
 
+    def motion_system(self, alive_balls: list[Ball], dt: float) -> None:
+        for ball in alive_balls:
+            runtime = self.runtime[ball.id]
+            motion = runtime.motion
+
+            # fast path: use predicted motion when cache is still valid
+            if consume_motion_plan(
+                ball,
+                motion,
+                dt,
+                self.cfg.motion_planning.dt_tolerance,
+                self.cfg.motion_planning.cache_steps,
+            ):
+                continue
+
+            # slow path: recompute only after invalidation
+            refresh_motion_plan(ball, motion, dt, self.cfg.motion_planning.cache_steps)
+            ball.x, ball.y = motion.predicted_next_position
+            motion.validity_steps -= 1
+
+    def collision_system(self, alive_balls: list[Ball]) -> None:
+        self.spatial_hash.rebuild(alive_balls)
         self.enqueue_boundary_events(alive_balls)
         self.enqueue_wall_events(alive_balls)
         self.enqueue_ball_events(alive_balls)
-        self.process_event_queue()
-        self.spawn_runtime_walls_if_needed()
+
+    def event_system(self) -> None:
+        self.frame_logs.clear()
+        while self.events:
+            event = self.events.popleft()
+            if event.type == EventType.BALL_BOUNDARY_COLLISION:
+                self.handle_boundary_collision(event)
+            elif event.type == EventType.BALL_WALL_COLLISION:
+                self.handle_wall_collision(event)
+            elif event.type == EventType.BALL_BALL_COLLISION:
+                self.handle_ball_collision(event)
+            elif event.type == EventType.BALL_DAMAGE:
+                self.handle_ball_damage(event)
+            elif event.type == EventType.BALL_ELIMINATION_CHECK:
+                self.handle_ball_elimination(event)
+
+    def rules_system(self) -> None:
         self.check_game_end()
 
     def alive_balls(self) -> list[Ball]:
@@ -94,6 +164,19 @@ class PongWarsGame:
         if ball is None or not ball.alive:
             return None
         return ball
+
+    def get_runtime(self, ball_id: int) -> BallRuntimeState | None:
+        ball = self.get_ball(ball_id)
+        if ball is None:
+            return None
+        return self.runtime[ball_id]
+
+    def invalidate_ball_cache(self, ball_id: int) -> None:
+        runtime = self.get_runtime(ball_id)
+        if runtime is None:
+            return
+        invalidate_motion(runtime.motion)
+        invalidate_candidate_cache(runtime.motion)
 
     def count_alive(self) -> tuple[int, int]:
         day_alive = 0
@@ -173,13 +256,31 @@ class PongWarsGame:
                 self.events.append(best_event)
 
     def enqueue_ball_events(self, alive_balls: list[Ball]) -> None:
-        for i in range(len(alive_balls)):
-            a = alive_balls[i]
-            for j in range(i + 1, len(alive_balls)):
-                b = alive_balls[j]
-                dx = b.x - a.x
-                dy = b.y - a.y
-                radius_sum = a.radius + b.radius
+        alive_by_id = {ball.id: ball for ball in alive_balls}
+
+        for ball in alive_balls:
+            runtime = self.runtime[ball.id]
+            cached_ids = consume_candidate_cache(runtime.motion)
+            if cached_ids is None:
+                candidate_ids = self.spatial_hash.nearby_ids(ball.x, ball.y)
+                set_candidate_cache(
+                    runtime.motion,
+                    candidate_ids,
+                    self.cfg.motion_planning.candidate_cache_steps,
+                )
+            else:
+                candidate_ids = cached_ids
+
+            for other_id in candidate_ids:
+                if other_id <= ball.id:
+                    continue
+                other = alive_by_id.get(other_id)
+                if other is None:
+                    continue
+
+                dx = other.x - ball.x
+                dy = other.y - ball.y
+                radius_sum = ball.radius + other.radius
                 dist_sq = dx * dx + dy * dy
                 if dist_sq > radius_sum * radius_sum:
                     continue
@@ -190,8 +291,8 @@ class PongWarsGame:
                     ny = dy / dist
                     penetration = radius_sum - dist
                 else:
-                    rvx = a.vx - b.vx
-                    rvy = a.vy - b.vy
+                    rvx = ball.vx - other.vx
+                    rvy = ball.vy - other.vy
                     rv_norm = (rvx * rvx + rvy * rvy) ** 0.5
                     if rv_norm > 1e-9:
                         nx = rvx / rv_norm
@@ -203,29 +304,16 @@ class PongWarsGame:
                 self.events.append(
                     GameEvent(
                         type=EventType.BALL_BALL_COLLISION,
-                        a_id=a.id,
-                        b_id=b.id,
+                        a_id=ball.id,
+                        b_id=other.id,
                         normal=(nx, ny),
                         penetration=penetration,
                     )
                 )
-                self.events.append(GameEvent(type=EventType.BALL_DAMAGE, a_id=a.id, b_id=b.id))
-                self.events.append(GameEvent(type=EventType.BALL_ELIMINATION_CHECK, a_id=a.id, b_id=b.id))
-
-    def process_event_queue(self) -> None:
-        self.frame_logs.clear()
-        while self.events:
-            event = self.events.popleft()
-            if event.type == EventType.BALL_BOUNDARY_COLLISION:
-                self.handle_boundary_collision(event)
-            elif event.type == EventType.BALL_WALL_COLLISION:
-                self.handle_wall_collision(event)
-            elif event.type == EventType.BALL_BALL_COLLISION:
-                self.handle_ball_collision(event)
-            elif event.type == EventType.BALL_DAMAGE:
-                self.handle_ball_damage(event)
-            elif event.type == EventType.BALL_ELIMINATION_CHECK:
-                self.handle_ball_elimination(event)
+                self.events.append(GameEvent(type=EventType.BALL_DAMAGE, a_id=ball.id, b_id=other.id))
+                self.events.append(
+                    GameEvent(type=EventType.BALL_ELIMINATION_CHECK, a_id=ball.id, b_id=other.id)
+                )
 
     def log_event(self, message: str) -> None:
         if not self.cfg.debug_event_log:
@@ -237,12 +325,14 @@ class PongWarsGame:
         ball = self.get_ball(event.a_id)
         if ball is None:
             return
+
         nx, ny = event.normal
         ball.vx, ball.vy = reflect(ball.vx, ball.vy, nx, ny)
         correction = max(0.0, event.penetration) + 0.5
         ball.x += nx * correction
         ball.y += ny * correction
         ball.clamp_speed(self.cfg.min_speed, self.cfg.max_speed)
+        self.invalidate_ball_cache(ball.id)
         self.log_event(f"boundary b{ball.id}")
 
     def handle_wall_collision(self, event: GameEvent) -> None:
@@ -251,6 +341,7 @@ class PongWarsGame:
             return
         if event.wall_cell is None or event.wall_cell not in self.wall_blocks:
             return
+
         nx, ny = event.normal
         ball.vx, ball.vy = reflect(ball.vx, ball.vy, nx, ny)
         correction = max(0.0, event.penetration) + 0.5
@@ -258,6 +349,7 @@ class PongWarsGame:
         ball.y += ny * correction
         ball.clamp_speed(self.cfg.min_speed, self.cfg.max_speed)
         self.wall_blocks.discard(event.wall_cell)
+        self.invalidate_ball_cache(ball.id)
         self.log_event(f"wall b{ball.id} cell{event.wall_cell}")
 
     def handle_ball_collision(self, event: GameEvent) -> None:
@@ -282,6 +374,8 @@ class PongWarsGame:
 
         a.clamp_speed(self.cfg.min_speed, self.cfg.max_speed)
         b.clamp_speed(self.cfg.min_speed, self.cfg.max_speed)
+        self.invalidate_ball_cache(a.id)
+        self.invalidate_ball_cache(b.id)
         self.log_event(f"ball-hit b{a.id}-b{b.id}")
 
     def handle_ball_damage(self, event: GameEvent) -> None:
@@ -289,6 +383,7 @@ class PongWarsGame:
         b = self.get_ball(event.b_id) if event.b_id is not None else None
         if a is None or b is None:
             return
+
         a.health = max(0.0, a.health - self.cfg.collision_damage)
         b.health = max(0.0, b.health - self.cfg.collision_damage)
         self.log_event(f"damage b{a.id}:{a.health:.0f} b{b.id}:{b.health:.0f}")
@@ -301,8 +396,10 @@ class PongWarsGame:
 
         if a.health <= 0:
             a.alive = False
+            self.invalidate_ball_cache(a.id)
         if b.health <= 0:
             b.alive = False
+            self.invalidate_ball_cache(b.id)
 
         if not a.alive or not b.alive:
             self.log_event(f"eliminate hp<=0 b{event.a_id}-b{event.b_id}")
@@ -310,9 +407,11 @@ class PongWarsGame:
 
         if a.health < b.health:
             a.alive = False
+            self.invalidate_ball_cache(a.id)
             self.log_event(f"eliminate lower hp b{a.id}")
         elif b.health < a.health:
             b.alive = False
+            self.invalidate_ball_cache(b.id)
             self.log_event(f"eliminate lower hp b{b.id}")
 
     def spawn_runtime_walls_if_needed(self) -> None:
@@ -325,6 +424,8 @@ class PongWarsGame:
         self.random_wall_spawn_elapsed_sec = 0.0
         spawned = spawn_random_walls(self.wall_blocks, self.balls, self.cfg)
         if spawned:
+            for ball in self.alive_balls():
+                self.invalidate_ball_cache(ball.id)
             self.log_event(f"wall-spawn +{len(spawned)}")
 
     def check_game_end(self) -> None:
