@@ -405,6 +405,9 @@ class PongWarsGame:
             self.log_event(f"eliminate hp<=0 b{event.a_id}-b{event.b_id}")
             return
 
+        if self.cfg.elimination_policy != "lower_hp":
+            return
+
         if a.health < b.health:
             a.alive = False
             self.invalidate_ball_cache(a.id)

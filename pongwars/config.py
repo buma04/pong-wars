@@ -52,6 +52,7 @@ class GameConfig:
     action_acceleration: float = 70.0
     action_turn_rate_deg: float = 120.0
     seed: int | None = None
+    elimination_policy: str = "hp_only"
     debug_event_log: bool = True
 
     @classmethod
@@ -144,6 +145,7 @@ class GameConfig:
             action_acceleration=float(data.get("action_acceleration", defaults.action_acceleration)),
             action_turn_rate_deg=float(data.get("action_turn_rate_deg", defaults.action_turn_rate_deg)),
             seed=parsed_seed,
+            elimination_policy=str(data.get("elimination_policy", defaults.elimination_policy)),
             debug_event_log=bool(data.get("debug_event_log", defaults.debug_event_log)),
         )
 

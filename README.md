@@ -14,7 +14,7 @@ Key features:
 - OOP-friendly architecture split into package modules (`pongwars/`)
 - Lightweight broad-phase with spatial hashing and candidate cache
 - Neutral wall blocks that disappear on hit while balls reflect
-- Ball-vs-ball reflection + damage + lower-HP elimination
+- Ball-vs-ball reflection + damage with configurable elimination policy
 - Runtime random wall spawning with safe placement (avoids overlap with alive balls)
 
 ### Cache-first architecture (predictive update)
@@ -68,6 +68,10 @@ python main.py --config game_config.json
 ### Config
 
 Main config is `game_config.json`.
+
+`elimination_policy` behavior:
+- `"hp_only"` (default): only remove balls when HP <= 0
+- `"lower_hp"`: after each ball collision, remove the one with lower HP
 
 Relevant random wall spawn settings:
 

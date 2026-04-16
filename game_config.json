@@ -34,5 +34,6 @@
   "action_acceleration": 70,
   "action_turn_rate_deg": 120,
   "seed": 7,
+  "elimination_policy": "hp_only",
   "debug_event_log": true
 }
